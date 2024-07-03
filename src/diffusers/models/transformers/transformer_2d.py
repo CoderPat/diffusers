@@ -332,6 +332,7 @@ class Transformer2DModel(LegacyModelMixin, LegacyConfigMixin):
         cross_attention_kwargs: Dict[str, Any] = None,
         attention_mask: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
+        return_cross_attn: bool = False,
         return_dict: bool = True,
     ):
         """
@@ -412,6 +413,7 @@ class Transformer2DModel(LegacyModelMixin, LegacyConfigMixin):
             )
 
         # 2. Blocks
+        cross_attns = []
         for block in self.transformer_blocks:
             if self.training and self.gradient_checkpointing:
 
@@ -445,7 +447,12 @@ class Transformer2DModel(LegacyModelMixin, LegacyConfigMixin):
                     timestep=timestep,
                     cross_attention_kwargs=cross_attention_kwargs,
                     class_labels=class_labels,
+                    return_cross_attn=return_cross_attn,
                 )
+                if return_cross_attn:
+                    hidden_states, cross_attn = hidden_states
+                    cross_attns.append(cross_attn)
+
 
         # 3. Output
         if self.is_input_continuous:
@@ -470,8 +477,9 @@ class Transformer2DModel(LegacyModelMixin, LegacyConfigMixin):
             )
 
         if not return_dict:
-            return (output,)
+            return (output,) if not return_cross_attn else (output, cross_attns)
 
+        # TODO: add cross_attns to output
         return Transformer2DModelOutput(sample=output)
 
     def _operate_on_continuous_inputs(self, hidden_states):

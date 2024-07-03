@@ -772,6 +772,7 @@ class StableDiffusionPipeline(
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.Tensor]] = None,
         output_type: Optional[str] = "pil",
+        return_cross_attn: bool = False,
         return_dict: bool = True,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         guidance_rescale: float = 0.0,
@@ -992,6 +993,7 @@ class StableDiffusionPipeline(
 
         # 7. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+        down_cross_attns = []
         self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -1003,15 +1005,20 @@ class StableDiffusionPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
-                noise_pred = self.unet(
+                outs = self.unet(
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds,
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
+                    return_cross_attn=return_cross_attn,
                     return_dict=False,
-                )[0]
+                )
+                noise_pred = outs[0]
+                #import pdb; pdb.set_trace()
+                if return_cross_attn:
+                    down_cross_attns.append(outs[1])
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
@@ -1062,6 +1069,6 @@ class StableDiffusionPipeline(
         self.maybe_free_model_hooks()
 
         if not return_dict:
-            return (image, has_nsfw_concept)
+            return (image, has_nsfw_concept, down_cross_attns) if return_cross_attn else (image, has_nsfw_concept)
 
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)

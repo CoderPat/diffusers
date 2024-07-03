@@ -345,6 +345,7 @@ class UNet2DConditionModel(
         else:
             blocks_time_embed_dim = time_embed_dim
 
+
         # down
         output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(down_block_types):
@@ -1043,6 +1044,7 @@ class UNet2DConditionModel(
         mid_block_additional_residual: Optional[torch.Tensor] = None,
         down_intrablock_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
+        return_cross_attn: bool = False,
         return_dict: bool = True,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
@@ -1125,6 +1127,8 @@ class UNet2DConditionModel(
         if encoder_attention_mask is not None:
             encoder_attention_mask = (1 - encoder_attention_mask.to(sample.dtype)) * -10000.0
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
+        
+
 
         # 0. center input if necessary
         if self.config.center_input_sample:
@@ -1199,6 +1203,7 @@ class UNet2DConditionModel(
             is_adapter = True
 
         down_block_res_samples = (sample,)
+        down_cross_attns = []
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 # For t2i-adapter CrossAttnDownBlock2D
@@ -1206,15 +1211,20 @@ class UNet2DConditionModel(
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
                     additional_residuals["additional_residuals"] = down_intrablock_additional_residuals.pop(0)
 
-                sample, res_samples = downsample_block(
+                outs = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                     encoder_attention_mask=encoder_attention_mask,
+                    return_cross_attn=return_cross_attn,
                     **additional_residuals,
                 )
+                sample, res_samples = outs[0], outs[1]
+                if return_cross_attn:
+                    cross_attns = outs[2]
+                    down_cross_attns.append(cross_attns)
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
@@ -1243,7 +1253,11 @@ class UNet2DConditionModel(
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                     encoder_attention_mask=encoder_attention_mask,
+                    return_cross_attn=return_cross_attn,
                 )
+                if return_cross_attn:
+                    sample, mid_cross_attn = sample
+
             else:
                 sample = self.mid_block(sample, emb)
 
@@ -1259,6 +1273,7 @@ class UNet2DConditionModel(
             sample = sample + mid_block_additional_residual
 
         # 5. up
+        up_cross_attns = []
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
@@ -1280,7 +1295,11 @@ class UNet2DConditionModel(
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
+                    return_cross_attn=return_cross_attn,
                 )
+                if return_cross_attn:
+                    sample, cross_attns = sample
+                    up_cross_attns.append(cross_attns)
             else:
                 sample = upsample_block(
                     hidden_states=sample,
@@ -1299,7 +1318,14 @@ class UNet2DConditionModel(
             # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
+        if return_cross_attn:
+            cross_attns = {
+                "down_blocks": down_cross_attns, 
+                "mid_block": mid_cross_attn,
+                "up_blocks": up_cross_attns
+            }
+
         if not return_dict:
-            return (sample,)
+            return (sample,) if not return_cross_attn else (sample, cross_attns)
 
         return UNet2DConditionOutput(sample=sample)

@@ -852,12 +852,14 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
+        return_cross_attn: bool = False,
     ) -> torch.Tensor:
         if cross_attention_kwargs is not None:
             if cross_attention_kwargs.get("scale", None) is not None:
                 logger.warning("Passing `scale` to `cross_attention_kwargs` is deprecated. `scale` will be ignored.")
 
         hidden_states = self.resnets[0](hidden_states, temb)
+        cross_attns = []
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             if self.training and self.gradient_checkpointing:
 
@@ -886,17 +888,21 @@ class UNetMidBlock2DCrossAttn(nn.Module):
                     **ckpt_kwargs,
                 )
             else:
-                hidden_states = attn(
+                outs = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
-                )[0]
+                    return_cross_attn=return_cross_attn,
+                )
+                hidden_states = outs[0]
+                if return_cross_attn:
+                    cross_attns.append(outs[1])
                 hidden_states = resnet(hidden_states, temb)
 
-        return hidden_states
+        return hidden_states if not return_cross_attn else (hidden_states, cross_attns)
 
 
 class UNetMidBlock2DSimpleCrossAttn(nn.Module):
@@ -1247,6 +1253,7 @@ class CrossAttnDownBlock2D(nn.Module):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         additional_residuals: Optional[torch.Tensor] = None,
+        return_cross_attn: bool = False,
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
         if cross_attention_kwargs is not None:
             if cross_attention_kwargs.get("scale", None) is not None:
@@ -1256,6 +1263,7 @@ class CrossAttnDownBlock2D(nn.Module):
 
         blocks = list(zip(self.resnets, self.attentions))
 
+        all_cross_attns = []
         for i, (resnet, attn) in enumerate(blocks):
             if self.training and self.gradient_checkpointing:
 
@@ -1285,14 +1293,19 @@ class CrossAttnDownBlock2D(nn.Module):
                 )[0]
             else:
                 hidden_states = resnet(hidden_states, temb)
-                hidden_states = attn(
+                outs = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
+                    return_cross_attn=return_cross_attn,
                     return_dict=False,
-                )[0]
+                )
+                hidden_states = outs[0]
+                if return_cross_attn:
+                    cross_attn = outs[1]
+                    all_cross_attns.append(cross_attn)
 
             # apply additional residuals to the output of the last pair of resnet and attention blocks
             if i == len(blocks) - 1 and additional_residuals is not None:
@@ -1306,7 +1319,7 @@ class CrossAttnDownBlock2D(nn.Module):
 
             output_states = output_states + (hidden_states,)
 
-        return hidden_states, output_states
+        return (hidden_states, output_states) if not return_cross_attn else (hidden_states, output_states, all_cross_attns)
 
 
 class DownBlock2D(nn.Module):
@@ -2489,6 +2502,7 @@ class CrossAttnUpBlock2D(nn.Module):
         upsample_size: Optional[int] = None,
         attention_mask: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
+        return_cross_attn: bool = False,
     ) -> torch.Tensor:
         if cross_attention_kwargs is not None:
             if cross_attention_kwargs.get("scale", None) is not None:
@@ -2501,6 +2515,7 @@ class CrossAttnUpBlock2D(nn.Module):
             and getattr(self, "b2", None)
         )
 
+        cross_attns = []
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
             res_hidden_states = res_hidden_states_tuple[-1]
@@ -2548,20 +2563,24 @@ class CrossAttnUpBlock2D(nn.Module):
                 )[0]
             else:
                 hidden_states = resnet(hidden_states, temb)
-                hidden_states = attn(
+                outs = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
+                    return_cross_attn=return_cross_attn,
                     return_dict=False,
-                )[0]
+                )
+                hidden_states = outs[0]
+                if return_cross_attn:
+                    cross_attns.append(outs[1])
 
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states, upsample_size)
 
-        return hidden_states
+        return hidden_states if not return_cross_attn else (hidden_states, cross_attns)
 
 
 class UpBlock2D(nn.Module):

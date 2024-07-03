@@ -765,6 +765,7 @@ class AttnProcessor:
         encoder_hidden_states: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
+        return_attn_probs: bool = False,
         *args,
         **kwargs,
     ) -> torch.Tensor:
@@ -808,11 +809,16 @@ class AttnProcessor:
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
         hidden_states = torch.bmm(attention_probs, value)
         hidden_states = attn.batch_to_head_dim(hidden_states)
+        # reshape attention_probs to make it consistent with the output
+        # from [B x H, Q, K] to [B, H, Q, K]
+
+        attention_probs = attention_probs.view(batch_size, attn.heads, hidden_states.shape[1], sequence_length)
 
         # linear proj
         hidden_states = attn.to_out[0](hidden_states)
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
+        
 
         if input_ndim == 4:
             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
@@ -822,7 +828,7 @@ class AttnProcessor:
 
         hidden_states = hidden_states / attn.rescale_output_factor
 
-        return hidden_states
+        return hidden_states if not return_attn_probs else (hidden_states, attention_probs)
 
 
 class CustomDiffusionAttnProcessor(nn.Module):

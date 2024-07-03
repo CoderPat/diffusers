@@ -557,6 +557,7 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         mid_block_additional_residual: Optional[torch.Tensor] = None,
+        return_cross_attn: bool = False,
         return_dict: bool = True,
     ) -> Union[UNet3DConditionOutput, Tuple[torch.Tensor]]:
         r"""
@@ -659,7 +660,7 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                sample, res_samples = downsample_block(
+                outs = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
@@ -668,7 +669,11 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
             else:
-                sample, res_samples = downsample_block(hidden_states=sample, temb=emb, num_frames=num_frames)
+                outs = downsample_block(hidden_states=sample, temb=emb, num_frames=num_frames)
+
+            sample, res_samples = outs[0], outs[1]
+            if return_cross_attn:
+                cross_attn = outs[2]
 
             down_block_res_samples += res_samples
 
