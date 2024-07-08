@@ -14,6 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+## A Note on this Fork
+
+This fork was created to allow extracting attention maps from diffusion models (for a course project).
+The main analysis is included in [this notebook](analysis.ipynb).
+
+---
+
 <p align="center">
     <br>
     <img src="https://raw.githubusercontent.com/huggingface/diffusers/main/docs/source/en/imgs/diffusers_library.jpg" width="400"/>
